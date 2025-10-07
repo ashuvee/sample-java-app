@@ -1,0 +1,50 @@
+Sample Java Web Application - Project Structure
+================================================
+
+sample-webapp/
+├── pom.xml                          # Maven build configuration
+├── README.md                        # Comprehensive documentation
+├── deploy.sh                        # Deployment script (Linux/Mac)
+├── deploy.bat                       # Deployment script (Windows)
+├── .gitignore                       # Git ignore file
+├── src/
+│   ├── main/
+│   │   ├── java/
+│   │   │   └── com/example/webapp/
+│   │   │       ├── HelloServlet.java     # Simple servlet with time display
+│   │   │       ├── UserServlet.java      # User management servlet
+│   │   │       └── User.java             # User model class
+│   │   └── webapp/
+│   │       ├── WEB-INF/
+│   │       │   └── web.xml               # Web application deployment descriptor
+│   │       ├── css/
+│   │       │   └── style.css             # Styling for the web pages
+│   │       ├── index.jsp                 # Home page
+│   │       └── users.jsp                 # User list page
+│   └── test/
+│       └── java/
+│           └── com/example/webapp/
+│               └── UserTest.java         # Unit tests for User class
+└── target/                          # Build output (generated)
+    └── sample-webapp.war            # Deployable WAR file
+
+Key Features:
+=============
+- Servlet API 4.0 compatible
+- JSP with JSTL support
+- Maven-based build system
+- Compatible with Java 11+
+- Works with Tomcat, JBoss, GlassFish, and Jetty
+- Includes embedded Jetty for quick testing
+- Professional CSS styling
+- Sample servlets demonstrating common patterns
+- Unit tests included
+
+Quick Start:
+============
+1. Build:    mvn clean package
+2. Test:     mvn test
+3. Run:      mvn jetty:run
+4. Deploy:   Copy target/sample-webapp.war to your application server
+
+Access the application at: http://localhost:8080/sample-webapp/
