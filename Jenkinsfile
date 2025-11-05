@@ -12,7 +12,7 @@ pipeline {
         NEXUS_URL = 'http://3.19.221.46:8081'
         NEXUS_REPO = 'my-java-app'
         NEXUS_GROUP = 'com/web/cal'
-        NEXUS_ARTIFACT = 'webapp-add'
+        NEXUS_ARTIFACT = 'my-app'
         TOMCAT_URL = 'http://18.116.203.32:8080/manager/text'
     }
 
