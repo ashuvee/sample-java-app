@@ -11,7 +11,7 @@ pipeline {
         MVN_SETTINGS = '/etc/maven/settings.xml'
         NEXUS_URL = 'http://3.19.221.46:8081'
         NEXUS_REPO = 'my-java-app'
-        NEXUS_GROUP = 'com/web/cal'
+        NEXUS_GROUP = 'com/web/app'
         NEXUS_ARTIFACT = 'my-app'
         TOMCAT_URL = 'http://18.116.203.32:8080/manager/text'
     }
