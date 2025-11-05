@@ -83,7 +83,7 @@ pipeline {
 
                         echo "🔍 Fetching latest WAR from Nexus..."
                         DOWNLOAD_URL=$(curl -s -u ${NEXUS_USR}:${NEXUS_PSW} \
-                            "${NEXUS_URL}/service/rest/v1/search?repository=${NEXUS_REPO}&group=com.web.cal&name=webapp-add" \
+                            "${NEXUS_URL}/service/rest/v1/search?repository=${NEXUS_REPO}&group=com.web.app&name=my-app" \
                             | grep -oP '"downloadUrl"\\s*:\\s*"\\K[^"]+\\.war' | grep -vE '\\.md5|\\.sha1' | tail -1)
 
                         if [[ -z "$DOWNLOAD_URL" ]]; then
