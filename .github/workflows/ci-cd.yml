@@ -174,19 +174,30 @@ jobs:
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
           NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
         run: |
+          set -e
           VERSION="${{ needs.build.outputs.version }}"
-          WAR_FILE=$(ls *.war | head -1)
+          ORIGINAL_WAR=$(ls *.war | head -1)
+          TARGET_WAR="${NEXUS_ARTIFACT}-${VERSION}.war"
           
-          echo "📤 Uploading ${WAR_FILE} to Nexus (version ${VERSION})..."
+          echo "📤 Uploading ${ORIGINAL_WAR} to Nexus (version ${VERSION})..."
           
-          UPLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.war"
+          # Rename file to match Nexus naming convention
+          if [[ "${ORIGINAL_WAR}" != "${TARGET_WAR}" ]]; then
+            echo "📝 Renaming ${ORIGINAL_WAR} to ${TARGET_WAR}"
+            mv "${ORIGINAL_WAR}" "${TARGET_WAR}"
+          fi
           
-          HTTP_CODE=$(curl -w "%{http_code}" -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} \
-            --upload-file "${WAR_FILE}" \
+          UPLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${TARGET_WAR}"
+          
+          echo "🔗 Upload URL: ${UPLOAD_URL}"
+          
+          HTTP_CODE=$(curl -w "%{http_code}" -o /dev/null -s \
+            -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} \
+            --upload-file "${TARGET_WAR}" \
             "${UPLOAD_URL}")
           
           if [[ ${HTTP_CODE} -ge 200 && ${HTTP_CODE} -lt 300 ]]; then
-            echo "✅ Artifact uploaded successfully to Nexus!"
+            echo "✅ Artifact uploaded successfully to Nexus! (HTTP ${HTTP_CODE})"
             echo "📦 Artifact URL: ${UPLOAD_URL}"
           else
             echo "❌ Failed to upload artifact (HTTP ${HTTP_CODE})"
@@ -221,7 +232,8 @@ jobs:
           DOWNLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${WAR_FILE}"
           
           echo "⬇️ Downloading artifact from Nexus..."
-          curl -f -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} -o "${WAR_FILE}" "${DOWNLOAD_URL}"
+          echo "🔗 Download URL: ${DOWNLOAD_URL}"
+          curl -f -L -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} -o "${WAR_FILE}" "${DOWNLOAD_URL}"
           
           if [[ ! -f "${WAR_FILE}" ]]; then
             echo "❌ Failed to download WAR file"
@@ -285,7 +297,8 @@ jobs:
           DOWNLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${WAR_FILE}"
           
           echo "⬇️ Downloading artifact from Nexus..."
-          curl -f -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} -o "${WAR_FILE}" "${DOWNLOAD_URL}"
+          echo "🔗 Download URL: ${DOWNLOAD_URL}"
+          curl -f -L -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} -o "${WAR_FILE}" "${DOWNLOAD_URL}"
           
           if [[ ! -f "${WAR_FILE}" ]]; then
             echo "❌ Failed to download WAR file"
