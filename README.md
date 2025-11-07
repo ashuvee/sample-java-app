@@ -2,6 +2,7 @@
 
 A Java web application with automated CI/CD pipeline using Jenkins, SonarQube, Nexus, and Tomcat.
 
+
 ## Table of Contents
 - [Pipeline Overview](#pipeline-overview)
 - [Pipeline Stages](#pipeline-stages)
