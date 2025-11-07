@@ -101,27 +101,24 @@ jobs:
         run: |
           set -e
           cd /tmp; rm -f *.war
-
+          
           # Use the same version as build step
-VERSION="0.0.${{ github.run_number }}"
-WAR_FILENAME="${{ env.NEXUS_ARTIFACT }}-${VERSION}.war"
-DOWNLOAD_URL="${{ secrets.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/${{ env.NEXUS_GROUP }}/${{ env.NEXUS_ARTIFACT }}/${VERSION}/${WAR_FILENAME}"
-
-echo "⬇️ Downloading WAR: $DOWNLOAD_URL"
-curl -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} -O "$DOWNLOAD_URL"
-WAR_FILE="$WAR_FILENAME"
-APP_NAME="${{ env.NEXUS_ARTIFACT }}"
-
-echo "🧹 Removing old deployment..."
-curl -u ${{ secrets.TOMCAT_USERNAME }}:${{ secrets.TOMCAT_PASSWORD }} \
-  "${{ secrets.TOMCAT_URL }}/manager/text/undeploy?path=/${APP_NAME}" || true
-
-echo "🚀 Deploying new WAR to Tomcat..."
-curl -u ${{ secrets.TOMCAT_USERNAME }}:${{ secrets.TOMCAT_PASSWORD }} \
-  --upload-file "$WAR_FILE" \
-  "${{ secrets.TOMCAT_URL }}/manager/text/deploy?path=/${APP_NAME}&update=true"
-
-echo "✅ Deployment successful!"
+          VERSION="0.0.${{ github.run_number }}"
+          WAR_FILENAME="${{ env.NEXUS_ARTIFACT }}-${VERSION}.war"
+          DOWNLOAD_URL="${{ secrets.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/${{ env.NEXUS_GROUP }}/${{ env.NEXUS_ARTIFACT }}/${VERSION}/${WAR_FILENAME}"
+          
+          echo "⬇️ Downloading WAR: $DOWNLOAD_URL"
+          curl -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} -O "$DOWNLOAD_URL"
+          WAR_FILE="$WAR_FILENAME"
+          APP_NAME="${{ env.NEXUS_ARTIFACT }}"
+          
+          echo "🧹 Removing old deployment..."
+          curl -u ${{ secrets.TOMCAT_USERNAME }}:${{ secrets.TOMCAT_PASSWORD }} \
+            "${{ secrets.TOMCAT_URL }}/manager/text/undeploy?path=/${APP_NAME}" || true
+          
+          echo "🚀 Deploying new WAR to Tomcat..."
+          curl -u ${{ secrets.TOMCAT_USERNAME }}:${{ secrets.TOMCAT_PASSWORD }} \
+            --upload-file "$WAR_FILE" \
             "${{ secrets.TOMCAT_URL }}/manager/text/deploy?path=/${APP_NAME}&update=true"
           
           echo "✅ Deployment successful!"
