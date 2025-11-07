@@ -91,6 +91,9 @@ jobs:
 
       - name: 🚀 Deploy to Tomcat
         env:
+          NEXUS_REPO: ${{ env.NEXUS_REPO }}
+          NEXUS_GROUP: ${{ env.NEXUS_GROUP }}
+          NEXUS_ARTIFACT: ${{ env.NEXUS_ARTIFACT }}
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
           NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
           TOMCAT_USERNAME: ${{ secrets.TOMCAT_USERNAME }}
@@ -99,11 +102,11 @@ jobs:
           set -e
           cd /tmp; rm -f *.war
           
-          NEXUS_GROUP_DOTS=$(echo "${NEXUS_GROUP}" | tr '/' '.')
+          NEXUS_GROUP_DOTS=$(echo "${{ env.NEXUS_GROUP }}" | tr '/' '.')
           
           echo "🔍 Fetching latest WAR from Nexus..."
           DOWNLOAD_URL=$(curl -s -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} \
-            "${{ secrets.NEXUS_URL }}/service/rest/v1/search?repository=${NEXUS_REPO}&group=${NEXUS_GROUP_DOTS}&name=${NEXUS_ARTIFACT}" \
+            "${{ secrets.NEXUS_URL }}/service/rest/v1/search?repository=${{ env.NEXUS_REPO }}&group=${NEXUS_GROUP_DOTS}&name=${{ env.NEXUS_ARTIFACT }}" \
             | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+\.war' | grep -vE '\.md5|\.sha1' | tail -1)
           
           if [[ -z "$DOWNLOAD_URL" ]]; then
