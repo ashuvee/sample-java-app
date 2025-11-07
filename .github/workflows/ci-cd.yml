@@ -1,119 +1,151 @@
 name: my-java-app
+
 on:
   push:
     branches:
-    - main
+      - main
+
 env:
   SONARQUBE_SERVER: sonar
   MVN_SETTINGS: "/etc/maven/settings.xml"
   NEXUS_URL: http://3.19.221.46:8081
   NEXUS_REPO: my-java-app
-  NEXUS_GROUP: com/web/app
+  NEXUS_GROUP: com.web.app          # Fixed: use dots, not slashes
   NEXUS_ARTIFACT: my-app
   TOMCAT_URL: http://18.116.203.32:8080/manager/text
+
 jobs:
   Checkout_Code:
     name: Checkout Code
-    runs-on:
-      - self-hosted
-      - sonar
+    runs-on: [self-hosted, sonar]
     steps:
-    - name: checkout
-      uses: actions/checkout@v4.1.0
-    - name: echo message
-      run: "echo ð\x9F\x93¦ Cloning source from GitHub..."
-    - name: checkout
-      uses: actions/checkout@v4.1.0
-      with:
-        repository: ashuvee/sample-java-app
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
   SonarQube_Analysis:
     name: SonarQube Analysis
-    runs-on:
-      - self-hosted
-      - sonar
+    runs-on: [self-hosted, sonar]
     needs: Checkout_Code
     steps:
-    - name: checkout
-      uses: actions/checkout@v4.1.0
-    - name: echo message
-      run: "echo ð\x9F\x94\x8D Running SonarQube static analysis..."
-#     # This item has no matching transformer
-#     - withSonarQubeEnv:
-#         isLiteral: false
-#         value: '"${{ env.SONARQUBE_SERVER }}"'
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Run SonarQube Analysis
+        run: echo "🔍 Running SonarQube static analysis..."
+
   Build_Artifact:
     name: Build Artifact
-    runs-on:
-      - self-hosted
-      - sonar
+    runs-on: [self-hosted, sonar]
     needs: SonarQube_Analysis
+    outputs:
+      version: ${{ steps.set_version.outputs.version }}
     steps:
-    - name: checkout
-      uses: actions/checkout@v4.1.0
-    - name: echo message
-      run: "echo â\x9A\x99ï¸\x8F Building WAR..."
-    - name: sh
-      shell: bash
-      run: mvn clean package -DskipTests --settings ${{ env.MVN_SETTINGS }}
-    - name: sh
-      shell: bash
-      run: "echo â\x9C\N Build Completed!"
-    - name: sh
-      shell: bash
-      run: ls -lh target/*.war || true
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Build WAR
+        run: mvn clean package -DskipTests --settings "${{ env.MVN_SETTINGS }}"
+      - name: Verify WAR
+        run: ls -lh target/*.war || echo "⚠️ No WAR found"
+      - name: Set version
+        id: set_version
+        run: echo "version=0.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+
   Upload_Artifact_to_Nexus:
     name: Upload Artifact to Nexus
-    runs-on:
-      - self-hosted
-      - sonar
+    runs-on: [self-hosted, sonar]
     needs: Build_Artifact
     steps:
-    - name: checkout
-      uses: actions/checkout@v4.1.0
-    - name: sh
-      shell: bash
-      run: "#!/bin/bash\n                        set -e\n                        WAR_FILE=$(ls target/*.war | head -1)\n                        FILE_NAME=$(basename \"$WAR_FILE\")\n                        VERSION=\"0.0.${{ github.run_id }}\"\n\n                        echo \"ð\x9F\x93¤ Uploading $FILE_NAME to Nexus as version $VERSION...\"\n\n                        curl -v -u ${{ env.NEXUS_USR }}:${{ env.NEXUS_PSW }} --upload-file \"$WAR_FILE\"                           \"${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/${{ env.NEXUS_GROUP }}/${{ env.NEXUS_ARTIFACT }}/${{ env.VERSION }}/${{ env.NEXUS_ARTIFACT }}-${{ env.VERSION }}.war\"\n\n                        echo \"â\x9C\N Artifact uploaded successfully to Nexus!\""
-      env:
-        NEXUS_USR: "${{ secrets.NEXUS_USERNAME }}"
-        NEXUS_PSW: "${{ secrets.NEXUS_PASSWORD }}"
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Upload to Nexus
+        env:
+          NEXUS_USR: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PSW: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          set -e
+          WAR_FILE=$(ls target/*.war | head -n1)
+          if [ ! -f "$WAR_FILE" ]; then
+            echo "❌ No WAR file found in target/"
+            exit 1
+          fi
+          VERSION="${{ needs.Build_Artifact.outputs.version }}"
+          FILE_NAME="${{ env.NEXUS_ARTIFACT }}-$VERSION.war"
+          echo "📤 Uploading $WAR_FILE as $FILE_NAME (version $VERSION) to Nexus..."
+          
+          UPLOAD_URL="${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/${{ env.NEXUS_GROUP_PATH }}/${{ env.NEXUS_ARTIFACT }}/$VERSION/$FILE_NAME"
+          
+          # Convert group ID to path (e.g., com.web.app → com/web/app)
+          GROUP_PATH=$(echo "${{ env.NEXUS_GROUP }}" | tr '.' '/')
+          UPLOAD_URL="${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/$GROUP_PATH/${{ env.NEXUS_ARTIFACT }}/$VERSION/$FILE_NAME"
+          
+          curl -f -u "$NEXUS_USR:$NEXUS_PSW" --upload-file "$WAR_FILE" "$UPLOAD_URL"
+          echo "✅ Artifact uploaded successfully to Nexus!"
+
   Deploy_to_Tomcat:
     name: Deploy to Tomcat
-    runs-on:
-      - self-hosted
-      - tomcat
+    runs-on: [self-hosted, tomcat]
     needs: Upload_Artifact_to_Nexus
     steps:
-    - name: checkout
-      uses: actions/checkout@v4.1.0
-    - name: sh
-      shell: bash
-      run: "#!/bin/bash\n                        set -e\n                        cd /tmp; rm -f *.war\n\n                        echo \"ð\x9F\x94\x8D Fetching latest WAR from Nexus...\"\n                        DOWNLOAD_URL=$(curl -s -u ${{ env.NEXUS_USR }}:${{ env.NEXUS_PSW }}                             \"${{ env.NEXUS_URL }}/service/rest/v1/search?repository=${{ env.NEXUS_REPO }}&group=com.web.app&name=my-app\"                             | grep -oP '\"downloadUrl\"\\s*:\\s*\"\\K[^\"]+\\.war' | grep -vE '\\.md5|\\.sha1' | tail -1)\n\n                        if [[ -z \"$DOWNLOAD_URL\" ]]; then\n                            echo \"â\x9D\x8C No WAR found in Nexus!\"\n                            exit 1\n                        fi\n\n                        echo \"â¬\x87ï¸\x8F Downloading WAR: $DOWNLOAD_URL\"\n                        curl -u ${{ env.NEXUS_USR }}:${{ env.NEXUS_PSW }} -O \"$DOWNLOAD_URL\"\n                        WAR_FILE=$(basename \"$DOWNLOAD_URL\")\n                        APP_NAME=$(echo \"$WAR_FILE\" | sed 's/-[0-9].*//')\n\n                        echo \"ð\x9F§¹ Removing old deployment...\"\n                        curl -u ${{ env.TOMCAT_USR }}:${{ env.TOMCAT_PSW }} \"${{ env.TOMCAT_URL }}/undeploy?path=/${{ env.APP_NAME }}\" || true\n\n                        echo \"ð\x9F\x9A\x80 Deploying new WAR to Tomcat...\"\n                        curl -u ${{ env.TOMCAT_USR }}:${{ env.TOMCAT_PSW }} --upload-file \"$WAR_FILE\"                             \"${{ env.TOMCAT_URL }}/deploy?path=/${{ env.APP_NAME }}&update=true\"\n\n                        echo \"â\x9C\N Deployment successful! Application updated.\""
-      env:
-        NEXUS_USR: "${{ secrets.NEXUS_USERNAME }}"
-        NEXUS_PSW: "${{ secrets.NEXUS_PASSWORD }}"
-        TOMCAT_USR: "${{ secrets.TOMCAT_USERNAME }}"
-        TOMCAT_PSW: "${{ secrets.TOMCAT_PASSWORD }}"
+      - name: Deploy from Nexus to Tomcat
+        env:
+          NEXUS_USR: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PSW: ${{ secrets.NEXUS_PASSWORD }}
+          TOMCAT_USR: ${{ secrets.TOMCAT_USERNAME }}
+          TOMCAT_PSW: ${{ secrets.TOMCAT_PASSWORD }}
+        run: |
+          set -e
+          cd /tmp || exit 1
+          VERSION="${{ needs.Build_Artifact.outputs.version }}"
+          GROUP_PATH=$(echo "${{ env.NEXUS_GROUP }}" | tr '.' '/')
+          FILE_NAME="${{ env.NEXUS_ARTIFACT }}-$VERSION.war"
+          DOWNLOAD_URL="${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/$GROUP_PATH/${{ env.NEXUS_ARTIFACT }}/$VERSION/$FILE_NAME"
+          
+          echo "📥 Downloading WAR from Nexus: $DOWNLOAD_URL"
+          curl -f -u "$NEXUS_USR:$NEXUS_PSW" -O "$DOWNLOAD_URL"
+          
+          if [ ! -f "$FILE_NAME" ]; then
+            echo "❌ Failed to download WAR file"
+            exit 1
+          fi
+
+          APP_NAME="${{ env.NEXUS_ARTIFACT }}"
+          echo "🧹 Undeploying old app (if any)..."
+          curl -u "$TOMCAT_USR:$TOMCAT_PSW" "${{ env.TOMCAT_URL }}/undeploy?path=/$APP_NAME" || true
+
+          echo "🚀 Deploying $FILE_NAME to Tomcat at /$APP_NAME..."
+          curl -f -u "$TOMCAT_USR:$TOMCAT_PSW" --upload-file "$FILE_NAME" \
+            "${{ env.TOMCAT_URL }}/deploy?path=/$APP_NAME&update=true"
+
+          echo "✅ Deployment successful! App is live at /$APP_NAME"
+
   Post-Build:
-    if: always()
     name: Post Build
-    runs-on:
-      - self-hosted
-      - sonar
+    if: always()
+    runs-on: [self-hosted, sonar]
     needs:
-    - Checkout_Code
-    - SonarQube_Analysis
-    - Build_Artifact
-    - Upload_Artifact_to_Nexus
-    - Deploy_to_Tomcat
+      - Checkout_Code
+      - SonarQube_Analysis
+      - Build_Artifact
+      - Upload_Artifact_to_Nexus
+      - Deploy_to_Tomcat
     steps:
-    - name: snapshot post build workflow status
-      run: |-
-        echo "success=${{ contains(needs.*.result,'success') && !contains(needs.*.result,'cancelled') && !contains(needs.*.result,'failure') }}" >> $GITHUB_OUTPUT
-        echo "failure=${{ contains(needs.*.result,'failure') && !contains(needs.*.result,'cancelled') }}" >> $GITHUB_OUTPUT
-      id: post_build
-    - name: echo message
-      run: "echo â\x9D\x8C Pipeline failed â\x80\x94 Check Jenkins logs."
-      if: steps.post_build.outputs.failure == 'true'
-    - name: echo message
-      run: "echo ð\x9F\x8E\x89 Pipeline completed successfully â\x80\x94 Application live on Tomcat!"
-      if: steps.post_build.outputs.success == 'true'
+      - name: Determine pipeline status
+        id: status
+        run: |
+          results="${{ toJson(needs) }}"
+          echo "Raw results: $results"
+          if echo "$results" | jq -e 'to_entries[] | select(.value.result == "failure")'; then
+            echo "failure=true" >> $GITHUB_OUTPUT
+          elif echo "$results" | jq -e 'to_entries[] | select(.value.result != "success")'; then
+            echo "failure=true" >> $GITHUB_OUTPUT  # treat cancelled/skipped as failure
+          else
+            echo "success=true" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Notify Failure
+        if: steps.status.outputs.failure == 'true'
+        run: echo "❌ Pipeline failed — check logs for details."
+
+      - name: Notify Success
+        if: steps.status.outputs.success == 'true'
+        run: echo "🎉 Pipeline completed successfully — application live on Tomcat!"
