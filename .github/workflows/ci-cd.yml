@@ -163,10 +163,21 @@ jobs:
     if: github.event_name == 'push'
     
     steps:
+      - name: 📦 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
       - name: ⬇️ Download Build Artifact
         uses: actions/download-artifact@v4
         with:
           name: webapp-war-${{ needs.build.outputs.version }}
+          path: target/
 
       - name: 📤 Upload to Nexus Repository
         env:
@@ -176,31 +187,39 @@ jobs:
         run: |
           set -e
           VERSION="${{ needs.build.outputs.version }}"
-          ORIGINAL_WAR=$(ls *.war | head -1)
-          TARGET_WAR="${NEXUS_ARTIFACT}-${VERSION}.war"
+          ORIGINAL_WAR=$(ls target/*.war | head -1)
+          TARGET_WAR="target/${NEXUS_ARTIFACT}-${VERSION}.war"
           
-          echo "📤 Uploading ${ORIGINAL_WAR} to Nexus (version ${VERSION})..."
+          echo "📤 Uploading to Nexus (version ${VERSION})..."
           
           # Rename file to match Nexus naming convention
           if [[ "${ORIGINAL_WAR}" != "${TARGET_WAR}" ]]; then
-            echo "📝 Renaming ${ORIGINAL_WAR} to ${TARGET_WAR}"
+            echo "📝 Renaming $(basename ${ORIGINAL_WAR}) to $(basename ${TARGET_WAR})"
             mv "${ORIGINAL_WAR}" "${TARGET_WAR}"
           fi
           
-          UPLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${TARGET_WAR}"
+          # Try using Nexus 3 REST API for uploading
+          echo "🔗 Uploading via Nexus REST API..."
           
-          echo "🔗 Upload URL: ${UPLOAD_URL}"
-          
-          HTTP_CODE=$(curl -w "%{http_code}" -o /dev/null -s \
+          RESPONSE=$(curl -w "\n%{http_code}" -s \
             -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} \
-            --upload-file "${TARGET_WAR}" \
-            "${UPLOAD_URL}")
+            -F "maven2.groupId=com.web.app" \
+            -F "maven2.artifactId=${NEXUS_ARTIFACT}" \
+            -F "maven2.version=${VERSION}" \
+            -F "maven2.asset1=@${TARGET_WAR}" \
+            -F "maven2.asset1.extension=war" \
+            "${NEXUS_URL}/service/rest/v1/components?repository=${NEXUS_REPO}")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
           
           if [[ ${HTTP_CODE} -ge 200 && ${HTTP_CODE} -lt 300 ]]; then
             echo "✅ Artifact uploaded successfully to Nexus! (HTTP ${HTTP_CODE})"
-            echo "📦 Artifact URL: ${UPLOAD_URL}"
+            echo "📦 Repository: ${NEXUS_REPO}"
+            echo "📦 Coordinates: com.web.app:${NEXUS_ARTIFACT}:${VERSION}"
           else
             echo "❌ Failed to upload artifact (HTTP ${HTTP_CODE})"
+            echo "Response: ${BODY}"
             exit 1
           fi
 
