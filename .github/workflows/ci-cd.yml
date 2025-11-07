@@ -89,9 +89,6 @@ jobs:
         with:
           name: webapp-war
 
-      - name: 📦 Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
       - name: 🚀 Deploy to Tomcat
         env:
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
@@ -102,12 +99,12 @@ jobs:
           set -e
           cd /tmp; rm -f *.war
           
+          NEXUS_GROUP_DOTS=$(echo "${NEXUS_GROUP}" | tr '/' '.')
+          
           echo "🔍 Fetching latest WAR from Nexus..."
-          
-          RESPONSE=$(curl -s -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} \
-            "${{ secrets.NEXUS_URL }}/service/rest/v1/search?repository=${NEXUS_REPO}&group=com.web.app&name=my-app")
-          
-          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.items[] | select(.version) | .assets[] | select(.downloadUrl | endswith(".war")) | .downloadUrl' | tail -1)
+          DOWNLOAD_URL=$(curl -s -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} \
+            "${{ secrets.NEXUS_URL }}/service/rest/v1/search?repository=${NEXUS_REPO}&group=${NEXUS_GROUP_DOTS}&name=${NEXUS_ARTIFACT}" \
+            | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+\.war' | grep -vE '\.md5|\.sha1' | tail -1)
           
           if [[ -z "$DOWNLOAD_URL" ]]; then
             echo "❌ No WAR found in Nexus!"
