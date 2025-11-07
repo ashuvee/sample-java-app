@@ -814,4 +814,4 @@ Green checkmarks for successful pipeline run
 
 Checkout Code→ SonarQube Analysis→ Build Artifact→ Upload Artifact→ Deploy to Tomcat
 
-![image-20251107122744755](/home/ashu/.config/Typora/typora-user-images/image-20251107122744755.png)
+![image-20251107122744755](imgs/image-20251107122744755.png)
