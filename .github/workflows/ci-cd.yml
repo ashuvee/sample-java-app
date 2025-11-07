@@ -1,0 +1,126 @@
+name: Java CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  NEXUS_REPO: 'my-java-app'
+  NEXUS_GROUP: 'com/web/app'
+  NEXUS_ARTIFACT: 'my-app'
+
+jobs:
+  build-and-analyze:
+    name: Build and Analyze
+    runs-on: ubuntu-latest
+    # Use self-hosted runner if SonarQube is on private network
+    # runs-on: self-hosted
+    
+    steps:
+      - name: 📦 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for better analysis
+
+      - name: ☕ Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: 🔍 SonarQube Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          echo "Running SonarQube static analysis..."
+          mvn clean verify sonar:sonar \
+            -Dsonar.projectKey=sample-java-app \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+            -DskipTests
+
+      - name: ⚙️ Build WAR Artifact
+        run: |
+          echo "Building WAR file..."
+          mvn clean package -DskipTests
+          echo "✅ Build Completed!"
+          ls -lh target/*.war
+
+      - name: 📤 Upload Artifact to Nexus
+        env:
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          WAR_FILE=$(ls target/*.war | head -1)
+          FILE_NAME=$(basename "$WAR_FILE")
+          VERSION="0.0.${{ github.run_number }}"
+          
+          echo "📤 Uploading $FILE_NAME to Nexus as version $VERSION..."
+          
+          curl -v -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} \
+            --upload-file "$WAR_FILE" \
+            "${{ secrets.NEXUS_URL }}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.war"
+          
+          echo "✅ Artifact uploaded successfully!"
+
+      - name: 📦 Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webapp-war
+          path: target/*.war
+          retention-days: 30
+
+  deploy:
+    name: Deploy to Tomcat
+    needs: build-and-analyze
+    runs-on: ubuntu-latest
+    # Use self-hosted runner if Tomcat is on private network
+    # runs-on: self-hosted
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: ⬇️ Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: webapp-war
+
+      - name: 🚀 Deploy to Tomcat
+        env:
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+          TOMCAT_USERNAME: ${{ secrets.TOMCAT_USERNAME }}
+          TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
+        run: |
+          set -e
+          cd /tmp; rm -f *.war
+          
+          echo "🔍 Fetching latest WAR from Nexus..."
+          DOWNLOAD_URL=$(curl -s -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} \
+            "${{ secrets.NEXUS_URL }}/service/rest/v1/search?repository=${NEXUS_REPO}&group=com.web.app&name=my-app" \
+            | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+\.war' | grep -vE '\.md5|\.sha1' | tail -1)
+          
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            echo "❌ No WAR found in Nexus!"
+            exit 1
+          fi
+          
+          echo "⬇️ Downloading WAR: $DOWNLOAD_URL"
+          curl -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} -O "$DOWNLOAD_URL"
+          WAR_FILE=$(basename "$DOWNLOAD_URL")
+          APP_NAME=$(echo "$WAR_FILE" | sed 's/-[0-9].*//')
+          
+          echo "🧹 Removing old deployment..."
+          curl -u ${{ secrets.TOMCAT_USERNAME }}:${{ secrets.TOMCAT_PASSWORD }} \
+            "${{ secrets.TOMCAT_URL }}/manager/text/undeploy?path=/${APP_NAME}" || true
+          
+          echo "🚀 Deploying new WAR to Tomcat..."
+          curl -u ${{ secrets.TOMCAT_USERNAME }}:${{ secrets.TOMCAT_PASSWORD }} \
+            --upload-file "$WAR_FILE" \
+            "${{ secrets.TOMCAT_URL }}/manager/text/deploy?path=/${APP_NAME}&update=true"
+          
+          echo "✅ Deployment successful!"
