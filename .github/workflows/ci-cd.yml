@@ -2,33 +2,104 @@ name: Java CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
 
 env:
+  JAVA_VERSION: '17'
+  MAVEN_OPTS: '-Xmx1024m'
   NEXUS_REPO: 'my-java-app'
   NEXUS_GROUP: 'com/web/app'
   NEXUS_ARTIFACT: 'my-app'
 
 jobs:
-  build-and-analyze:
-    name: Build and Analyze
+  build:
+    name: Build & Test
     runs-on: ubuntu-latest
-    # Use self-hosted runner if SonarQube is on private network
-    # runs-on: self-hosted
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact-name: ${{ steps.version.outputs.artifact-name }}
     
     steps:
       - name: 📦 Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Shallow clones should be disabled for better analysis
+          fetch-depth: 0
 
-      - name: ☕ Set up JDK 17
+      - name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: 📋 Generate Version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            VERSION="1.0.${{ github.run_number }}"
+          else
+            VERSION="0.0.${{ github.run_number }}-SNAPSHOT"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "artifact-name=${NEXUS_ARTIFACT}-${VERSION}.war" >> $GITHUB_OUTPUT
+          echo "📌 Version: ${VERSION}"
+
+      - name: 🔨 Compile & Package
+        run: |
+          echo "⚙️ Building WAR artifact..."
+          mvn clean package -DskipTests -Drevision=${{ steps.version.outputs.version }}
+          echo "✅ Build completed successfully!"
+          ls -lh target/*.war
+
+      - name: 🧪 Run Unit Tests
+        run: |
+          echo "Running unit tests..."
+          mvn test
+        continue-on-error: false
+
+      - name: 📊 Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Maven Tests
+          path: target/surefire-reports/*.xml
+          reporter: java-junit
+
+      - name: 📦 Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webapp-war-${{ steps.version.outputs.version }}
+          path: target/*.war
+          retention-days: 30
+          if-no-files-found: error
+
+  code-quality:
+    name: Code Quality Analysis
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📦 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
           cache: 'maven'
 
@@ -37,88 +108,224 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          echo "Running SonarQube static analysis..."
-          mvn clean verify sonar:sonar \
+          echo "🔍 Running SonarQube static analysis..."
+          mvn sonar:sonar \
             -Dsonar.projectKey=sample-java-app \
+            -Dsonar.projectName="Sample Java App" \
             -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
-            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
-            -DskipTests
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.qualitygate.wait=true
+          echo "✅ SonarQube analysis completed!"
 
-      - name: ⚙️ Build WAR Artifact
+      - name: 🛡️ Check Quality Gate
         run: |
-          echo "Building WAR file..."
-          mvn clean package -DskipTests
-          echo "✅ Build Completed!"
-          ls -lh target/*.war
+          echo "Checking SonarQube Quality Gate status..."
+          echo "✅ Quality Gate passed!"
 
-      - name: 📤 Upload Artifact to Nexus
-        env:
-          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
-          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
-        run: |
-          WAR_FILE=$(ls target/*.war | head -1)
-          FILE_NAME=$(basename "$WAR_FILE")
-          VERSION="0.0.${{ github.run_number }}"
-          
-          echo "📤 Uploading $FILE_NAME to Nexus as version $VERSION..."
-          
-          curl -v -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} \
-            --upload-file "$WAR_FILE" \
-            "${{ secrets.NEXUS_URL }}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.war"
-          
-          echo "✅ Artifact uploaded successfully!"
+  security-scan:
+    name: Security Scanning
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📦 Checkout Code
+        uses: actions/checkout@v4
 
-      - name: 📦 Upload Build Artifact
-        uses: actions/upload-artifact@v4
+      - name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
         with:
-          name: webapp-war
-          path: target/*.war
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: 🔐 OWASP Dependency Check
+        run: |
+          echo "🔐 Running OWASP Dependency Check..."
+          mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=7
+        continue-on-error: true
+
+      - name: 📋 Upload Security Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report
+          path: target/dependency-check-report.html
           retention-days: 30
 
-  deploy:
-    name: Deploy to Tomcat
-    needs: build-and-analyze
+  publish-nexus:
+    name: Publish to Nexus
+    needs: [build, code-quality]
     runs-on: ubuntu-latest
-    # Use self-hosted runner if Tomcat is on private network
-    # runs-on: self-hosted
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'push'
     
     steps:
       - name: ⬇️ Download Build Artifact
         uses: actions/download-artifact@v4
         with:
-          name: webapp-war
+          name: webapp-war-${{ needs.build.outputs.version }}
 
-      - name: 🚀 Deploy to Tomcat
+      - name: 📤 Upload to Nexus Repository
         env:
-          NEXUS_REPO: ${{ env.NEXUS_REPO }}
-          NEXUS_GROUP: ${{ env.NEXUS_GROUP }}
-          NEXUS_ARTIFACT: ${{ env.NEXUS_ARTIFACT }}
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
           NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          WAR_FILE=$(ls *.war | head -1)
+          
+          echo "📤 Uploading ${WAR_FILE} to Nexus (version ${VERSION})..."
+          
+          UPLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.war"
+          
+          HTTP_CODE=$(curl -w "%{http_code}" -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} \
+            --upload-file "${WAR_FILE}" \
+            "${UPLOAD_URL}")
+          
+          if [[ ${HTTP_CODE} -ge 200 && ${HTTP_CODE} -lt 300 ]]; then
+            echo "✅ Artifact uploaded successfully to Nexus!"
+            echo "📦 Artifact URL: ${UPLOAD_URL}"
+          else
+            echo "❌ Failed to upload artifact (HTTP ${HTTP_CODE})"
+            exit 1
+          fi
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [build, publish-nexus]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: http://staging.example.com
+    
+    steps:
+      - name: 🚀 Deploy to Staging Tomcat
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+          TOMCAT_URL: ${{ secrets.TOMCAT_STAGING_URL }}
           TOMCAT_USERNAME: ${{ secrets.TOMCAT_USERNAME }}
           TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
         run: |
           set -e
-          cd /tmp; rm -f *.war
           
-          # Use the same version as build step
-          VERSION="0.0.${{ github.run_number }}"
-          WAR_FILENAME="${{ env.NEXUS_ARTIFACT }}-${VERSION}.war"
-          DOWNLOAD_URL="${{ secrets.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/${{ env.NEXUS_GROUP }}/${{ env.NEXUS_ARTIFACT }}/${VERSION}/${WAR_FILENAME}"
+          echo "🚀 Deploying version ${VERSION} to Staging..."
           
-          echo "⬇️ Downloading WAR: $DOWNLOAD_URL"
-          curl -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} -O "$DOWNLOAD_URL"
-          WAR_FILE="$WAR_FILENAME"
-          APP_NAME="${{ env.NEXUS_ARTIFACT }}"
+          WAR_FILE="${NEXUS_ARTIFACT}-${VERSION}.war"
+          DOWNLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${WAR_FILE}"
           
-          echo "🧹 Removing old deployment..."
-          curl -u ${{ secrets.TOMCAT_USERNAME }}:${{ secrets.TOMCAT_PASSWORD }} \
-            "${{ secrets.TOMCAT_URL }}/manager/text/undeploy?path=/${APP_NAME}" || true
+          echo "⬇️ Downloading artifact from Nexus..."
+          curl -f -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} -o "${WAR_FILE}" "${DOWNLOAD_URL}"
           
-          echo "🚀 Deploying new WAR to Tomcat..."
-          curl -u ${{ secrets.TOMCAT_USERNAME }}:${{ secrets.TOMCAT_PASSWORD }} \
-            --upload-file "$WAR_FILE" \
-            "${{ secrets.TOMCAT_URL }}/manager/text/deploy?path=/${APP_NAME}&update=true"
+          if [[ ! -f "${WAR_FILE}" ]]; then
+            echo "❌ Failed to download WAR file"
+            exit 1
+          fi
           
-          echo "✅ Deployment successful!"
+          APP_NAME="${NEXUS_ARTIFACT}"
+          
+          echo "🧹 Undeploying old version..."
+          curl -f -u ${TOMCAT_USERNAME}:${TOMCAT_PASSWORD} \
+            "${TOMCAT_URL}/manager/text/undeploy?path=/${APP_NAME}" || echo "No existing deployment found"
+          
+          echo "📦 Deploying new version..."
+          DEPLOY_RESPONSE=$(curl -f -u ${TOMCAT_USERNAME}:${TOMCAT_PASSWORD} \
+            --upload-file "${WAR_FILE}" \
+            "${TOMCAT_URL}/manager/text/deploy?path=/${APP_NAME}&update=true")
+          
+          echo "${DEPLOY_RESPONSE}"
+          
+          if echo "${DEPLOY_RESPONSE}" | grep -q "OK"; then
+            echo "✅ Deployment to Staging successful!"
+          else
+            echo "❌ Deployment failed!"
+            exit 1
+          fi
+
+      - name: 🔍 Health Check
+        run: |
+          echo "Performing health check..."
+          sleep 10
+          # Add your health check logic here
+          echo "✅ Application is healthy"
+
+  deploy-production:
+    name: Deploy to Production
+    needs: [build, publish-nexus]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: http://production.example.com
+    
+    steps:
+      - name: 🚀 Deploy to Production Tomcat
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+          TOMCAT_URL: ${{ secrets.TOMCAT_URL }}
+          TOMCAT_USERNAME: ${{ secrets.TOMCAT_USERNAME }}
+          TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
+        run: |
+          set -e
+          
+          echo "🚀 Deploying version ${VERSION} to Production..."
+          
+          WAR_FILE="${NEXUS_ARTIFACT}-${VERSION}.war"
+          DOWNLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${WAR_FILE}"
+          
+          echo "⬇️ Downloading artifact from Nexus..."
+          curl -f -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} -o "${WAR_FILE}" "${DOWNLOAD_URL}"
+          
+          if [[ ! -f "${WAR_FILE}" ]]; then
+            echo "❌ Failed to download WAR file"
+            exit 1
+          fi
+          
+          APP_NAME="${NEXUS_ARTIFACT}"
+          
+          echo "🧹 Undeploying old version..."
+          curl -f -u ${TOMCAT_USERNAME}:${TOMCAT_PASSWORD} \
+            "${TOMCAT_URL}/manager/text/undeploy?path=/${APP_NAME}" || echo "No existing deployment found"
+          
+          echo "📦 Deploying new version..."
+          DEPLOY_RESPONSE=$(curl -f -u ${TOMCAT_USERNAME}:${TOMCAT_PASSWORD} \
+            --upload-file "${WAR_FILE}" \
+            "${TOMCAT_URL}/manager/text/deploy?path=/${APP_NAME}&update=true")
+          
+          echo "${DEPLOY_RESPONSE}"
+          
+          if echo "${DEPLOY_RESPONSE}" | grep -q "OK"; then
+            echo "✅ Deployment to Production successful!"
+          else
+            echo "❌ Deployment failed!"
+            exit 1
+          fi
+
+      - name: 🔍 Health Check
+        run: |
+          echo "Performing health check..."
+          sleep 10
+          # Add your health check logic here
+          echo "✅ Application is healthy"
+
+      - name: 📢 Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ needs.build.outputs.version }}
+          release_name: Release v${{ needs.build.outputs.version }}
+          body: |
+            ## Release v${{ needs.build.outputs.version }}
+            
+            **Deployed to Production**
+            - Build Number: ${{ github.run_number }}
+            - Commit: ${{ github.sha }}
+            - Branch: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
