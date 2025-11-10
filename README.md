@@ -365,12 +365,12 @@ Manage Jenkins → System → SonarQube servers
 ```bash
 # Install Java
 sudo apt update
-sudo apt install openjdk-11-jdk -y
+sudo apt install openjdk-17-jdk -y
 
 # Download and install Nexus
 cd /opt
-sudo wget https://download.sonatype.com/nexus/3/latest-unix.tar.gz
-sudo tar -xzf latest-unix.tar.gz
+sudo wget https://download.sonatype.com/nexus/3/nexus-3.85.0-03-linux-x86_64.tar.gz
+sudo tar -xzf nexus-3.85.0-03-linux-x86_64.tar.gz
 sudo mv nexus-3.* nexus
 
 # Create Nexus user
