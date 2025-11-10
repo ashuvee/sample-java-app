@@ -80,18 +80,28 @@ jobs:
         cd /tmp
         rm -f *.war || true
         
+        echo "⏳ Waiting for Nexus to index the artifact..."
+        sleep 5
+        
         echo "🔍 Fetching latest WAR from Nexus..."
-        DOWNLOAD_URL=$(curl -s -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} \
-          "${NEXUS_URL}/service/rest/v1/search?repository=${NEXUS_REPO}&group=com.web.app&name=my-app" \
-          | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+\.war' | grep -vE '\.md5|\.sha1' | tail -1)
+        SEARCH_URL="${NEXUS_URL}/service/rest/v1/search?repository=${NEXUS_REPO}&group=com.web.app&name=my-app&sort=version"
+        echo "Search URL: $SEARCH_URL"
+        
+        RESPONSE=$(curl -s -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} "$SEARCH_URL")
+        echo "Nexus response: $RESPONSE"
+        
+        DOWNLOAD_URL=$(echo "$RESPONSE" | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+\.war' | grep -vE '\.md5|\.sha1' | tail -1)
         
         if [[ -z "$DOWNLOAD_URL" ]]; then
           echo "❌ No WAR found in Nexus!"
-          exit 1
+          echo "Trying direct path method..."
+          VERSION="0.0.${{ github.run_number }}"
+          DOWNLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.war"
+          echo "Direct URL: $DOWNLOAD_URL"
         fi
         
         echo "⬇️ Downloading WAR: $DOWNLOAD_URL"
-        curl -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} -O "$DOWNLOAD_URL"
+        curl -f -u ${NEXUS_USERNAME}:${NEXUS_PASSWORD} -O "$DOWNLOAD_URL"
         WAR_FILE=$(basename "$DOWNLOAD_URL")
         APP_NAME=$(echo "$WAR_FILE" | sed 's/-[0-9].*//')
         
